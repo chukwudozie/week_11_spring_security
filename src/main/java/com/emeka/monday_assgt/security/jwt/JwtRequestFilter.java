@@ -1,6 +1,7 @@
 package com.emeka.monday_assgt.security.jwt;
 
 import com.emeka.monday_assgt.security.services.MyUserDetailsService;
+import com.emeka.monday_assgt.security.services.UserDetailsImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -17,50 +18,39 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
-@Component
 @Slf4j
+@Component
 public class JwtRequestFilter extends OncePerRequestFilter {
-    private final MyUserDetailsService userDetailsService;
-    private final JwtUtils utils;
+    private JwtUtils jwtUtil;
+    private MyUserDetailsService userDetailsService;
 
     @Autowired
-    public JwtRequestFilter(final MyUserDetailsService userDetailsService, final JwtUtils utils) {
+    public JwtRequestFilter(final JwtUtils jwtUtil, final MyUserDetailsService userDetailsService) {
+        this.jwtUtil = jwtUtil;
         this.userDetailsService = userDetailsService;
-        this.utils = utils;
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        final String authenticationHeader = request.getHeader("Authorization");
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain filterChain) throws ServletException, IOException {
+        final String authorizationHeader = req.getHeader("Authorization");
+        String username = null;
+        String jwt = null;
+        log.info("Authorization header: " + authorizationHeader);
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            jwt = authorizationHeader.substring(7);
+            username = jwtUtil.extractUsername(jwt);
+        }
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            UserDetailsImpl userDetails = (UserDetailsImpl) userDetailsService.loadUserByUsername(username);
+            if (jwtUtil.validateToken(jwt, userDetails)) {
+                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                usernamePasswordAuthenticationToken
+                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
 
-        try {
-            String jwt = parseJwt(request);
-            if (jwt != null && utils.validateJwtToken(jwt)) {
-                String username = utils.getUserNameFromJwtToken(jwt);
-
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
             }
-        } catch (Exception e) {
-            log.error("Cannot set User Authentication");
-            e.printStackTrace();
         }
-        filterChain.doFilter(request, response);
+        filterChain.doFilter(req, res);
     }
-
-    private String parseJwt(HttpServletRequest request){
-        String headerAuth = request.getHeader("Authorization");
-
-        if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
-            return headerAuth.substring(7);
-        }
-
-        return null;
-    }
-
 }
